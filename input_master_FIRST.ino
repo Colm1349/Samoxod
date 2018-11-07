@@ -1,5 +1,5 @@
 /* Задача.
-//new_git_life+1
+  //new_git_life+1
     ПУЛЬТ.
 
     //ОСНОВНАЯ ЗАДАЧА
@@ -35,6 +35,9 @@
 
 // скетч для Arduino пульта (Control Panel), который посылает сигнал на плату-управления, обрабатывает телеметрию, выводит информацию телеметрии на дисплей
 //зажигаем когда обрабатываем пакет телеметрии
+
+#include <avr/wdt.h>
+
 int led = LED_BUILTIN;  //диод на плате
 int input_sensor = 0;
 String TelemetryStringArr;
@@ -44,11 +47,15 @@ int cntr = 0;
 int FORWARD_LED = 11;   //DEBUG
 int BACKWARD_LED = 12;  //DEBUG
 int BUZZER_ALARM = 4;   //DEBUG
+int Self_Led_Forward = 8;
+int Self_Led_Backward = 7;
+int Self_Output_Command = 0;
 bool AlarmTrigger = false;
 
 //Обработка прерывания по переполнению счётчика. Должны пищалкой пищать
 ISR(TIMER2_OVF_vect)
 {
+  cli();
   TCNT2 = 0; //55; Костыльное решение для изменения скорости моргания. ЛОЛ
   cntr++;
   if (cntr > 1000)
@@ -59,6 +66,7 @@ ISR(TIMER2_OVF_vect)
     digitalWrite(BACKWARD_LED, LOW);
     digitalWrite(FORWARD_LED, LOW);
   }
+  sei();
 }
 
 void setup()
@@ -69,11 +77,15 @@ void setup()
   pinMode(FORWARD_LED, OUTPUT);
   pinMode(BACKWARD_LED, OUTPUT);
   pinMode(BUZZER_ALARM, OUTPUT);
+  pinMode(Self_Led_Forward, OUTPUT);
+  pinMode(Self_Led_Backward, OUTPUT);
 
   //Индикация OFF на начале работы
   digitalWrite(led, LOW);
   digitalWrite(FORWARD_LED, LOW);
   digitalWrite(BACKWARD_LED, LOW);
+  digitalWrite(Self_Led_Forward, HIGH);
+  digitalWrite(Self_Led_Backward, HIGH);
   //Настройка таймера 2 (T2)
   TCCR2A = 0;     // 0b00000000 -> Normal режим (никаких ШИМ) / Не ставили условий для ноги OC0A(12)
   TCNT2 = 0;      // 0b00111011 -> Это просто регистр со значениями куда всё тикает. зачем там 59?
@@ -88,6 +100,26 @@ void loop()
   // Read_Data
   int value = analogRead(input_sensor);
   int reborn = map(value, 0, 1023, 0, 255); //приводим к значению от 0 до 255
+
+  if (reborn >= 0 & reborn < 90) //STOP
+  {
+    digitalWrite(Self_Led_Backward, LOW);
+    digitalWrite(Self_Led_Forward, LOW);
+    Self_Output_Command = 1;        
+  }
+  if (reborn >= 90 & reborn < 140) //BACKWARD
+  {
+    digitalWrite(Self_Led_Backward, HIGH);
+    digitalWrite(Self_Led_Forward, LOW);  
+    Self_Output_Command = -5;   
+  }
+  if (reborn >= 140 & reborn <= 255) //FORWARD
+  {
+    digitalWrite(Self_Led_Forward, HIGH);
+    digitalWrite(Self_Led_Backward, LOW);
+    Self_Output_Command = 5;
+  }
+
   // Send_Data
   Serial.write(reborn);
   sei(); // разрешаем приём телетрии
@@ -104,6 +136,7 @@ int PrintOnDisplay()
 //Приём телеметрии - по прерыванию с порта UART
 void serialEvent()
 {
+  wdt_enable(WDTO_2S); //разрешение работы сторожевого таймера с тайм-аутом 2 с
   // Приём информации и запись в переменную TelemetryStringArr
   cli(); // Запретим прерывания
   while (Serial.available())
@@ -121,6 +154,8 @@ void serialEvent()
   // чистка переменной String
   TelemetryStringArr = "";
   sei(); // разрешим прерывания
+  wdt_reset();    //сброс сторожевого таймера
+  wdt_disable();  // запрет работы сторожевого таймера
 }
 
 void START_Alarm()
@@ -146,21 +181,30 @@ void Telemetry_Data_Processing(String StringArr)
     digitalWrite(FORWARD_LED, HIGH);
     digitalWrite(BACKWARD_LED, LOW);
     digitalWrite(led, LOW);
-    Telemetry_okay = true;
+    if (Self_Output_Command == 5)
+      Telemetry_okay = true;
+    else
+      Telemetry_okay = false;
   }
   if (StringArr == "B")     // BACKWARD
   {
     digitalWrite(BACKWARD_LED, HIGH);
     digitalWrite(FORWARD_LED, LOW);
-    digitalWrite(led, LOW);
-    Telemetry_okay = true;
+    digitalWrite(led, LOW); 
+    if (Self_Output_Command == -5)
+      Telemetry_okay = true;
+    else
+      Telemetry_okay = false;
   }
   if (StringArr == "S")     // STOP
   {
     digitalWrite(led, HIGH);
     digitalWrite(BACKWARD_LED, LOW);
     digitalWrite(FORWARD_LED, LOW);
-    Telemetry_okay = true;
+    if (Self_Output_Command == 1)
+      Telemetry_okay = true;
+    else
+      Telemetry_okay = false;
   }
 
   //TELEMETRY_WITH_FAIL =(
