@@ -41,7 +41,8 @@
 int led = LED_BUILTIN;  //диод на плате
 int input_sensor = 0;
 String TelemetryStringArr;
-int ErrorCounter = 0;
+int ErrorCounter_Combo = 0;
+int Good_Receive_Combo = 0;
 int cntr = 0;
 
 int FORWARD_LED = 11;   //DEBUG
@@ -51,9 +52,10 @@ int Self_Led_Forward = 8;
 int Self_Led_Backward = 7;
 int Self_Output_Command = 0;
 bool AlarmTrigger = false;
+bool WDT_ACTIVE = false;
 
-//Обработка прерывания по переполнению счётчика. Должны пищалкой пищать
-ISR(TIMER2_OVF_vect)
+//Обработка прерывания по переполнению счётчика. BUZZER_ON if cntr > X
+ISR(TIMER2_OVF_vect) // Если мы даём сигнал о тревоге то нужно запускать таймер для ребута! => в функции таймера сбрасываем
 {
   cli();
   TCNT2 = 0; //55; Костыльное решение для изменения скорости моргания. ЛОЛ
@@ -61,6 +63,11 @@ ISR(TIMER2_OVF_vect)
   if (cntr > 1000)
   {
     START_Alarm();
+    if (WDT_ACTIVE == false)
+    {
+      wdt_enable(WDTO_2S); //Start WatchDog Timer
+      WDT_ACTIVE = true;
+    }
     cntr = 0;
     digitalWrite(led, LOW);
     digitalWrite(BACKWARD_LED, LOW);
@@ -100,18 +107,17 @@ void loop()
   // Read_Data
   int value = analogRead(input_sensor);
   int reborn = map(value, 0, 1023, 0, 255); //приводим к значению от 0 до 255
-
   if (reborn >= 0 & reborn < 90) //STOP
   {
     digitalWrite(Self_Led_Backward, LOW);
     digitalWrite(Self_Led_Forward, LOW);
-    Self_Output_Command = 1;        
+    Self_Output_Command = 0;
   }
   if (reborn >= 90 & reborn < 140) //BACKWARD
   {
     digitalWrite(Self_Led_Backward, HIGH);
-    digitalWrite(Self_Led_Forward, LOW);  
-    Self_Output_Command = -5;   
+    digitalWrite(Self_Led_Forward, LOW);
+    Self_Output_Command = -5;
   }
   if (reborn >= 140 & reborn <= 255) //FORWARD
   {
@@ -119,10 +125,9 @@ void loop()
     digitalWrite(Self_Led_Backward, LOW);
     Self_Output_Command = 5;
   }
-
   // Send_Data
   Serial.write(reborn);
-  sei(); // разрешаем приём телетрии
+  sei(); // разрешаем приём телеметрии
   // Работа с дисплеем
   PrintOnDisplay();  // Какую команду дали, какую получили, токи/напряжение/обороты/прочий угар выводим на дисплей
 }
@@ -136,7 +141,6 @@ int PrintOnDisplay()
 //Приём телеметрии - по прерыванию с порта UART
 void serialEvent()
 {
-  wdt_enable(WDTO_2S); //разрешение работы сторожевого таймера с тайм-аутом 2 с
   // Приём информации и запись в переменную TelemetryStringArr
   cli(); // Запретим прерывания
   while (Serial.available())
@@ -148,20 +152,15 @@ void serialEvent()
       //sei();
     }
   }
-  Reset_Error_Timer();
-  //Обработка полученных данных
-  Telemetry_Data_Processing(TelemetryStringArr);
-  // чистка переменной String
-  TelemetryStringArr = "";
+  Reset_Error_Timer_And_Check_WDTimer();
+  Telemetry_Data_Processing(TelemetryStringArr); //Обработка полученных данных
+  TelemetryStringArr = "";   // чистка переменной String
   sei(); // разрешим прерывания
-  wdt_reset();    //сброс сторожевого таймера
-  wdt_disable();  // запрет работы сторожевого таймера
 }
 
 void START_Alarm()
 {
   AlarmTrigger = true;
-  digitalWrite(led, HIGH);
   digitalWrite(BUZZER_ALARM, HIGH);
 }
 
@@ -175,69 +174,74 @@ void STOP_Alarm()
 //Обработка полученных данных
 void Telemetry_Data_Processing(String StringArr)
 {
-  bool Telemetry_okay = false;
-  if (StringArr == "F" )    // FORWARD
+  //Проверка на верность полученных данных
+  //if ( ( StringArr == "F" & Self_Output_Command == 5 ) | ( StringArr == "B" & Self_Output_Command == -5 ) | ( StringArr == "S" & Self_Output_Command == 0 ) )
+    if ( ( StringArr == "F" ) | ( StringArr == "B") | ( StringArr == "S" ) )
   {
-    digitalWrite(FORWARD_LED, HIGH);
-    digitalWrite(BACKWARD_LED, LOW);
-    digitalWrite(led, LOW);
-    if (Self_Output_Command == 5)
-      Telemetry_okay = true;
-    else
-      Telemetry_okay = false;
-  }
-  if (StringArr == "B")     // BACKWARD
-  {
-    digitalWrite(BACKWARD_LED, HIGH);
-    digitalWrite(FORWARD_LED, LOW);
-    digitalWrite(led, LOW); 
-    if (Self_Output_Command == -5)
-      Telemetry_okay = true;
-    else
-      Telemetry_okay = false;
-  }
-  if (StringArr == "S")     // STOP
-  {
-    digitalWrite(led, HIGH);
-    digitalWrite(BACKWARD_LED, LOW);
-    digitalWrite(FORWARD_LED, LOW);
-    if (Self_Output_Command == 1)
-      Telemetry_okay = true;
-    else
-      Telemetry_okay = false;
-  }
-
-  //TELEMETRY_WITH_FAIL =(
-  if (Telemetry_okay == false)
-  {
-    ErrorCounter = ErrorCounter + 1;
-    if (ErrorCounter >= 60)
+    Good_Receive_Combo = Good_Receive_Combo + 1;
+    cli();
+    Reset_Error_Timer_And_Check_WDTimer();
+    ErrorCounter_Combo = 0;
+    sei();
+    if (Good_Receive_Combo == 1)
     {
-      START_Alarm(); // ТЕСТИТЬ !!!! мб и не 60 надо а другое число
-      ErrorCounter = 0;
-      //Выключаем наши диоды - у нас потеря связи или тип того.
-      digitalWrite(led, LOW);
-      digitalWrite(BACKWARD_LED, LOW);
-      digitalWrite(FORWARD_LED, LOW);
-      //Serial.println("THRASH on Channel =(  -> " + TelemetryStringArr);   // мусор =(
+      if (StringArr == "F" )    // FORWARD
+      {
+        digitalWrite(FORWARD_LED, HIGH);
+        digitalWrite(BACKWARD_LED, LOW);
+        digitalWrite(led, LOW);
+      }
+      if (StringArr == "B")     // BACKWARD
+      {
+        digitalWrite(BACKWARD_LED, HIGH);
+        digitalWrite(FORWARD_LED, LOW);
+        digitalWrite(led, LOW);
+      }
+      if (StringArr == "S")     // STOP
+      {
+        digitalWrite(led, HIGH);
+        digitalWrite(BACKWARD_LED, LOW);
+        digitalWrite(FORWARD_LED, LOW);
+      }
+      Good_Receive_Combo = 0;
     }
   }
-  else
+  else    //TELEMETRY_WITH_FAIL =(
   {
-    // ALL OK
-    STOP_Alarm();
-    ErrorCounter = 0;
-    Reset_Error_Timer();
+    Good_Receive_Combo = 0;
+    ErrorCounter_Combo = ErrorCounter_Combo + 1;
+    if (ErrorCounter_Combo >= 60)
+    {
+      START_Alarm(); // ТЕСТИТЬ !!!! мб и не 100 надо а другое число
+      if (WDT_ACTIVE == false)
+      {
+        wdt_enable(WDTO_4S); // WDT ENABLE!
+        WDT_ACTIVE = true;
+      }
+      ErrorCounter_Combo = 0;
+      //Выключаем наши диоды - у нас потеря связи или тип того.
+      digitalWrite(led, HIGH);
+      digitalWrite(BACKWARD_LED, HIGH);
+      digitalWrite(FORWARD_LED, HIGH);
+      //debug_delay
+      delay(1000); //!!!! ТУТ ПРОК Оо
+      //Serial.println("THRASH on Channel =(  -> " + TelemetryStringArr);   // мусор =(
+    }
   }
   // END FOR Processing Data from Telemetry
 }
 
-void Reset_Error_Timer()
+void Reset_Error_Timer_And_Check_WDTimer()
 {
   cli();
   if (AlarmTrigger == true)
   {
-    STOP_Alarm();
+    STOP_Alarm();  // + AlarmTrigger == false
+    if (WDT_ACTIVE == true)
+    {
+      wdt_disable();         //TURN OFF WDT!
+      WDT_ACTIVE = false;
+    }
   }
   TCCR2B = 0b00000000;     // 0b00000000 -> STOP_TIMER (CS02 = CS01 = CS00 = 0)
   TCNT2 = 0;               // обнуляем регистр счёта
