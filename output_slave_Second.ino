@@ -1,5 +1,5 @@
 /* ЗАДАЧА
-//new_git_life+2
+  //new_git_life+2
     ПРИЁМНИК
 
     //НАЧАЛО РАБОТЫ
@@ -39,8 +39,11 @@
 
 // скетч для Arduino, который принимает данные с пульта и даёт команду двигателям, собирает телеметрию и отправляет её на пульт
 
+#include <avr/wdt.h>
+
 int incomingByte = 0;
 int Command = 0; // -5 / 0 / 5
+int Receive_Error_Counter = 0;
 int cntr = 0;
 //BIND PINS NAMES
 int Permission_To_Move = 2;    // выставляется после направления движения
@@ -48,17 +51,28 @@ int Direction_Of_Movement = 3; //выставляется раньше разр�
 int systemLed = 13;
 int BUZZER_PIN = 10;
 bool AlarmTrigger = false;
+bool WDT_ACTIVE = false;
 
 //Обработка прерывания по переполнению счётчика. Должны пищалкой пищать
 ISR(TIMER2_OVF_vect) {
+  cli();
   TCNT2 = 0; //55; Костыльное решение для изменения скорости моргания. ЛОЛ
   cntr++;
   if (cntr > 1000)
   {
     // ALARM
     Alarm_ON();
+    if (WDT_ACTIVE == false)
+    {
+      wdt_enable(WDTO_4S); // WDT ENABLE!
+      WDT_ACTIVE = true;
+    }
     cntr = 0;
+    digitalWrite(Direction_Of_Movement  , LOW);
+    digitalWrite(Permission_To_Move, LOW);
+    Command = 1; // FAIL MARKER
   }
+  sei();
 }
 
 
@@ -100,31 +114,43 @@ void serialEvent()
   //Обработка принятого
   //По идее тут должна быть функция разбора CREEPY пакета с Mbee
   //Выясним направление с пульта
+  //Команда без смысла
+  Command = 1;
   if (incomingByte >= 140 & incomingByte <= 255)
   {
     Command = 5; // FORWARD
-    Reset_Error_Timer();
   }
   if (incomingByte >= 90 & incomingByte < 140)
   {
     Command = -5; // BACKWARD
-    Reset_Error_Timer();
   }
   if (incomingByte >= 0 & incomingByte < 90)
   {
     Command = 0; // STOP
-    Reset_Error_Timer();
   }
-
   if (Command != -5 & Command != 0 & Command != 5 )
   {
-    Serial.print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAASHIBKAAAAA");
-    digitalWrite(Permission_To_Move, LOW);
-    digitalWrite(Direction_Of_Movement, LOW);
-    digitalWrite(systemLed, LOW);
-    delay(500);
+    Receive_Error_Counter = Receive_Error_Counter + 1;
+    if (Receive_Error_Counter >= 50 )
+    {
+      cli();
+      //Emergency Stop!!!
+      digitalWrite(Permission_To_Move, LOW);
+      digitalWrite(Direction_Of_Movement, LOW);
+      digitalWrite(systemLed, LOW);
+      Alarm_ON();
+      if (WDT_ACTIVE == false)
+      {
+        wdt_enable(WDTO_1S); // WDT ENABLE!
+        WDT_ACTIVE = true;
+      }
+      sei();
+    }
   }
-
+  else
+  {
+    Reset_Error_Timer_And_Check_WDT();
+  }
 }
 
 void Command_To_Motor (int instruction)
@@ -147,15 +173,18 @@ void Command_To_Motor (int instruction)
       digitalWrite(systemLed, LOW);
       break;
     default:
-      Alarm_ON();
-      // выполняется, если не выбрана ни одна альтернатива
-      // default необязателен
+      break;
+      //      Alarm_ON();
+      //      if (WDT_ACTIVE == false)
+      //      {
+      //        wdt_enable(WDTO_1S); // WDT ENABLE!
+      //        WDT_ACTIVE = true;
+      //      }
   }
 }
 
 void Send_Telemetry (int instruction)
 {
-  cli();
   if (instruction == 5)
   {
     Serial.print("F"); //FORWARD
@@ -168,16 +197,19 @@ void Send_Telemetry (int instruction)
   {
     Serial.print("S"); //STOP
   }
-  sei();
-  delay(5);
 }
 
-void Reset_Error_Timer()
+void Reset_Error_Timer_And_Check_WDT()
 {
   cli();
   if (AlarmTrigger == true)
   {
-    digitalWrite(BUZZER_PIN, LOW);
+    Alarm_OFF();
+    if (WDT_ACTIVE = true)
+    {
+      WDT_ACTIVE = false;
+      wdt_disable();           //TURN OFF WDT!
+    }
   }
   TCCR2B = 0b00000000;     // 0b00000000 -> STOP_TIMER (CS02 = CS01 = CS00 = 0)
   TCNT2 = 0;  // обнуляем регистр счёта
