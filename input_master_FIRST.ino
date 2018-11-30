@@ -48,6 +48,8 @@ int cntr = 0;
 int FORWARD_LED = 11;   //DEBUG
 int BACKWARD_LED = 12;  //DEBUG
 int BUZZER_ALARM = 4;   //DEBUG
+int BackwardPin = 3;
+int ForwardPin = 2;
 int Self_Led_Forward = 8;
 int Self_Led_Backward = 7;
 int Self_Output_Command = 0;
@@ -86,6 +88,8 @@ void setup()
   pinMode(BUZZER_ALARM, OUTPUT);
   pinMode(Self_Led_Forward, OUTPUT);
   pinMode(Self_Led_Backward, OUTPUT);
+  pinMode(ForwardPin, INPUT);
+  pinMode(BackwardPin, INPUT);
 
   //Индикация OFF на начале работы
   digitalWrite(led, LOW);
@@ -105,28 +109,44 @@ void loop()
 {
   cli(); //передать данные важнее чем принять телеметрию и вывести данные на дисплей
   // Read_Data
-  int value = analogRead(input_sensor);
-  int reborn = map(value, 0, 1023, 0, 255); //приводим к значению от 0 до 255
-  if (reborn >= 0 & reborn < 90) //STOP
-  {
-    digitalWrite(Self_Led_Backward, LOW);
-    digitalWrite(Self_Led_Forward, LOW);
-    Self_Output_Command = 0;
-  }
-  if (reborn >= 90 & reborn < 140) //BACKWARD
-  {
-    digitalWrite(Self_Led_Backward, HIGH);
-    digitalWrite(Self_Led_Forward, LOW);
-    Self_Output_Command = -5;
-  }
-  if (reborn >= 140 & reborn <= 255) //FORWARD
+  //  int RAW_value = analogRead(input_sensor);
+  //  int reborn = map(RAW_value, 0, 1023, 0, 255); //приводим к значению от 0 до 255
+  bool CommandForward = digitalRead(ForwardPin);
+  bool CommandBackward = digitalRead(BackwardPin);
+  int  Command = 0;
+
+  if (CommandForward == true)
   {
     digitalWrite(Self_Led_Forward, HIGH);
     digitalWrite(Self_Led_Backward, LOW);
     Self_Output_Command = 5;
+    Command = 200;    //FORWARD 
   }
+  if(CommandBackward == true)
+  {
+    digitalWrite(Self_Led_Backward, HIGH);
+    digitalWrite(Self_Led_Forward, LOW);
+    Self_Output_Command = -5; //Backward
+    Command = 100;
+  }
+  if (CommandForward == false & CommandBackward == false)
+  {
+    digitalWrite(Self_Led_Forward, LOW);
+    digitalWrite(Self_Led_Backward, LOW);
+    Self_Output_Command = 0;
+    Command = 0;    //STOP 
+  }
+  if (CommandForward == true & CommandBackward == true)
+  {
+    digitalWrite(Self_Led_Forward, HIGH);
+    digitalWrite(Self_Led_Backward, HIGH);
+    Self_Output_Command = 0;
+    START_Alarm();
+    Command = 666;    //error 
+  }
+
   // Send_Data
-  Serial.write(reborn);
+  Serial.write(Command);
   sei(); // разрешаем приём телеметрии
   // Работа с дисплеем
   PrintOnDisplay();  // Какую команду дали, какую получили, токи/напряжение/обороты/прочий угар выводим на дисплей
@@ -176,7 +196,7 @@ void Telemetry_Data_Processing(String StringArr)
 {
   //Проверка на верность полученных данных
   //if ( ( StringArr == "F" & Self_Output_Command == 5 ) | ( StringArr == "B" & Self_Output_Command == -5 ) | ( StringArr == "S" & Self_Output_Command == 0 ) )
-    if ( ( StringArr == "F" ) | ( StringArr == "B") | ( StringArr == "S" ) )
+  if ( ( StringArr == "F" ) | ( StringArr == "B") | ( StringArr == "S" ) )
   {
     Good_Receive_Combo = Good_Receive_Combo + 1;
     cli();
