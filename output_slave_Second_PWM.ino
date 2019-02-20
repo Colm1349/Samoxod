@@ -1,39 +1,15 @@
 /* ЗАДАЧА
-  //new_git_life+2
-    ПРИЁМНИК
 
-    //НАЧАЛО РАБОТЫ
+   Забирать данные о состоянии кнопок и выдавать сигнал двигателю с помощью двух пинов управления движением и одним пином для ШИМ (PWM)
+   регулирующим скорость. Двигатель может работать только при ШИМ от 10 до 90 % поэтому берём ~12% и ~88 % что бы иметь запас.
+   Кнопки всего две -»  ВПЕРЕД и НАЗАД. Вперед это сигнал " 1 1 " назад это " 0 1 " если кнопки не нажаты то это сигнал СТОП.
+   Одновремнное нажатие двух это ошибка.
 
-    Собираем информацию о НАПРЯЖЕНИИ и зажигаем диод в зависимости от значения
-    ~(12 - 15 Вольт == ЗЕЛЕНЫЙ)
-    ~(8 - 12  Вольт == ЖЕЛТЫЙ)
-    ~(8 и меньше == КРАСНЫЙ)
+   Добавлены отладочные диоды.
+   Код чисто для теста на столе, использоание в дальнейших работах требует переработки кода)
+   
 
-    Взводим таймер на 1 секунду и разрешаем прерывания по таймеру
 
-    //ОСНОВНАЯ ЗАДАЧА
-
-    Ловим данные от пульта (скорее всего без пакетной передачи) и сохраняем в переменную.
-    Выключаем таймер.
-    Смотрим значение переменной и даём команду на мотор/двигателя (контроллер мотора если точнее)
-    И зажигаем один из диодов вперёд/назад
-    //(Зел - вперёд / Красный - назад   -- тестовый вариант)
-    //для индикации будем по началу использовать два диода - ЗЕЛЕНЫЙ и КРАСНЫЙ (pin5 и pin8)
-
-    //Если данных нет более секунды начинаем кричать пищалкой (вызов функции ALERT() )
-    //и ловим дальше команду
-
-    Если удалось дать команду то идём дальше в сбор телеметрии
-
-    // СБОР ТЕЛЕМЕТРИИ
-
-    Забираем значения с датчиков ТОКА, ТЕМПЕРАТУРЫ.
-    Сохраняем в переменные
-
-    //ОТПРАВКА ДАННЫХ НА ПУЛЬТ
-
-    Данные с датчиков собираем в пакет и отправляем на пульт
-    Dозвращаемся к началу цикла loop() [ НАЧАЛО РАБОТЫ - сбор данных о напряжении]
 
 */
 
@@ -42,8 +18,9 @@
 #define Stop 0
 #define Forward 5
 #define Backward -5
-#define Max_SpeedValue 255
-#define Min_SpeedValue -255
+#define Max_SpeedValue 225   // 225
+#define Min_SpeedValue -225  // -225
+#define ZeroPWM 30
 #define ErrorMove 10
 #define SystemLed 13
 //#define
@@ -56,8 +33,8 @@ int Actual_Command = 0; // -5 / 0 / 5
 int Ordered_Command = 0;
 int Receive_Error_Counter = 0;
 int cntr = 0;
-int PWM_Value = 0;
-int SpeedValue_Now = 0; // 0 -== stop [-255  - 0 - 255]
+int PWM_Value = ZeroPWM;
+int SpeedValue_Now = ZeroPWM; // 30 -== stop [Min_SpeedValue(==-225)]  -ZeroPWM (==30)] & [ZeroPWM(30) - Max_SpeedValue(==225)]
 //int Min_SpeedValue = -255;
 //int Max_SpeedValue = 255;
 int Step_For_Move = 0;
@@ -123,7 +100,7 @@ void setup()
   TCCR2A = 0;     // 0b00000000 -> Normal режим (никаких ШИМ) / Не ставили условий для ноги OC0A(12)
   TCNT2 = 0;      // 0b00111011 -> Это просто регистр со значениями куда всё тикает. зачем там 59?
   TIMSK2 = 0b00000001;  //0b00000001 - TOIE - до переполнения // ИЛИ -> TIMSK2 = 1; ИЛИ -> TIMSK2 |= (1 << TOIE2);
-//  TCCR2B = 0b00000011;  // 0b00000010 -> clk/8 (CS02 / CS01 / CS00)
+  //  TCCR2B = 0b00000011;  // 0b00000010 -> clk/8 (CS02 / CS01 / CS00)
   TCCR2B = 0b00000000; // STOp Timer2
 }
 
@@ -132,63 +109,62 @@ void loop()
   //Debug Method
   InputButtons();
   Command_To_Motor(Ordered_Command);
-  Send_Telemetry (Actual_Command);
 }
 
 //СОБЫТИЕ ПРЕРЫВАНИЯ И ДЕЙСТВИЯ ПОСЛЕ ПРИЕМА БАЙТА
 //приём команды от пульта по прерыванию на UART
-void serialEvent()
-{
-  cli(); // запрет прерываний пока принимаем данные
-  while (Serial.available())
-  {
-    incomingByte = (int) Serial.read();
-  }
-  sei(); // разрешаем прерывания
-  //Обработка принятого
-  //По идее тут должна быть функция разбора CREEPY пакета с Mbee
-  //Выясним направление с пульта
-  //Команда без смысла
-  Ordered_Command = 1;
-  if (incomingByte >= 140 & incomingByte <= 255)
-  {
-    Ordered_Command = 5; // FORWARD
-  }
-  if (incomingByte >= 90 & incomingByte < 140)
-  {
-    Ordered_Command = -5; // BACKWARD
-  }
-  if (incomingByte >= 0 & incomingByte < 90)
-  {
-    Ordered_Command = 0; // STOP
-  }
-  if (Ordered_Command != -5 & Ordered_Command != 0 & Ordered_Command != 5)
-  {
-    Receive_Error_Counter = Receive_Error_Counter + 1;
-    if (Receive_Error_Counter >= 50 )
-    {
-      cli();
-      //Emergency Stop!!!
-      digitalWrite(Permission_To_Move, LOW);
-      digitalWrite(Direction_Of_Movement, LOW);
-      digitalWrite(systemLed, LOW);
-      //Debug
-      digitalWrite(BackwardLed, LOW);
-      digitalWrite(ForwardLed, LOW);
-      Alarm_ON();
-      if (WDT_ACTIVE == false)
-      {
-        //        wdt_enable(WDTO_1S); // WDT ENABLE!
-        WDT_ACTIVE = true;
-      }
-      sei();
-    }
-  }
-  else
-  {
-    Reset_Error_Timer_And_Check_WDT();
-  }
-}
+//void serialEvent()
+//{
+//  cli(); // запрет прерываний пока принимаем данные
+//  while (Serial.available())
+//  {
+//    incomingByte = (int) Serial.read();
+//  }
+//  sei(); // разрешаем прерывания
+//  //Обработка принятого
+//  //По идее тут должна быть функция разбора CREEPY пакета с Mbee
+//  //Выясним направление с пульта
+//  //Команда без смысла
+//  Ordered_Command = 1;
+//  if (incomingByte >= 140 & incomingByte <= 255)
+//  {
+//    Ordered_Command = 5; // FORWARD
+//  }
+//  if (incomingByte >= 90 & incomingByte < 140)
+//  {
+//    Ordered_Command = -5; // BACKWARD
+//  }
+//  if (incomingByte >= 0 & incomingByte < 90)
+//  {
+//    Ordered_Command = 0; // STOP
+//  }
+//  if (Ordered_Command != -5 & Ordered_Command != 0 & Ordered_Command != 5)
+//  {
+//    Receive_Error_Counter = Receive_Error_Counter + 1;
+//    if (Receive_Error_Counter >= 50 )
+//    {
+//      cli();
+//      //Emergency Stop!!!
+//      digitalWrite(Permission_To_Move, LOW);
+//      digitalWrite(Direction_Of_Movement, LOW);
+//      digitalWrite(systemLed, LOW);
+//      //Debug
+//      digitalWrite(BackwardLed, LOW);
+//      digitalWrite(ForwardLed, LOW);
+//      Alarm_ON();
+//      if (WDT_ACTIVE == false)
+//      {
+//        //wdt_enable(WDTO_1S); // WDT ENABLE!
+//        WDT_ACTIVE = true;
+//      }
+//      sei();
+//    }
+//  }
+//  else
+//  {
+//    Reset_Error_Timer_And_Check_WDT();
+//  }
+//}
 
 void Command_To_Motor (int instruction)
 {
@@ -196,7 +172,13 @@ void Command_To_Motor (int instruction)
   {
     Serial.println("Wrong Move command.");
     //Stop motors GO TO ZERO PWM
-    analogWrite(PWM_Pin, PWM_Value);
+    if ( (PWM_Value >=  Min_SpeedValue & PWM_Value <= Max_SpeedValue) | (PWM_Value > ((-1)*ZeroPWM) & PWM_Value < ZeroPWM ) )
+    {
+      SpeedValue_Now = ZeroPWM;
+      PWM_Value = ZeroPWM;
+      analogWrite(PWM_Pin, PWM_Value);
+    }
+    // need couter for reset device
     //Debug
     digitalWrite(ForwardLed, LOW);
     digitalWrite(BackwardLed, LOW);
@@ -206,32 +188,31 @@ void Command_To_Motor (int instruction)
   }
   if (instruction == Stop)
   {
-    Wished_Speed = Stop;
-    if (SpeedValue_Now == Stop)
+    Wished_Speed = ZeroPWM;
+    if (SpeedValue_Now == Wished_Speed)
     {
-      Serial.println("We stopped");
+      Serial.println(" We stopped");
       Step_For_Move = 0;
+      return;
     }
     if (SpeedValue_Now != Wished_Speed)
     {
       //Need Change Step
-      if (SpeedValue_Now > 0)
+      if (SpeedValue_Now > ZeroPWM)
       {
         Step_For_Move = -1; // pull to zero
       }
-      if (SpeedValue_Now < 0)
+      if ( SpeedValue_Now < ((-1)*ZeroPWM) )
       {
         Step_For_Move = 1; // pull to zero
       }
+      //Calculate
       SpeedValue_Now = SpeedValue_Now + Step_For_Move;
-      if (SpeedValue_Now == Wished_Speed) // && Actual_Command == STOP
+      if (SpeedValue_Now == ( (-1)*ZeroPWM + 1) | SpeedValue_Now == ((-1)*ZeroPWM) ) // == -29 | -30
       {
+        SpeedValue_Now = ZeroPWM;  // ==Wished_Speed
         Step_For_Move = 0;  // command complete
         Serial.println("STOP NOW");
-      }
-      else
-      {
-        // ??????
       }
     }
     Serial.print("(Stopping)Speed == ");
@@ -242,21 +223,22 @@ void Command_To_Motor (int instruction)
   if (instruction == Forward)
   {
     Wished_Speed = Max_SpeedValue;
-    if (instruction == Actual_Command)
-    {
-      // do nothing
-    }
-    if (Wished_Speed == SpeedValue_Now == Max_SpeedValue)
+    if (SpeedValue_Now == Max_SpeedValue) // check for Wished_Speed
     {
       Serial.println("Max Speed is reached!");
       Step_For_Move = 0;
+      return;
     }
     if (SpeedValue_Now >= Min_SpeedValue && SpeedValue_Now < Max_SpeedValue)
     {
-      Step_For_Move = 1; // pull to 255 (Max_SpeedValue)
+      Step_For_Move = 1; // pull to 225 (Max_SpeedValue)
     }
     SpeedValue_Now = SpeedValue_Now + Step_For_Move;
-    if (SpeedValue_Now == Max_SpeedValue)
+    // Portal
+    if (SpeedValue_Now == (ZeroPWM * (-1) + 1) | SpeedValue_Now == ((-1)*ZeroPWM)) // == - 29 | == -30
+      SpeedValue_Now = ZeroPWM;
+    // FINISHER
+    if (SpeedValue_Now == Max_SpeedValue) // ==Wished_Speed
     {
       Step_For_Move = 0;  // command complete
       Serial.println("Max Speed RIGHT NOW! LvL UP! ");
@@ -269,25 +251,28 @@ void Command_To_Motor (int instruction)
   if (instruction == Backward)
   {
     Wished_Speed = Min_SpeedValue;
-    if (instruction == Actual_Command)
-    {
-      // do nothing
-    }
-    if (Wished_Speed == SpeedValue_Now == Min_SpeedValue)
+    if (SpeedValue_Now == Wished_Speed)
     {
       Serial.println("Min Speed is reached!");
       Step_For_Move = 0; // pull to 255 (Max_SpeedValue)
+      return;
     }
     if (SpeedValue_Now > Min_SpeedValue && SpeedValue_Now <= Max_SpeedValue)
     {
       Step_For_Move = -1;
     }
     SpeedValue_Now = SpeedValue_Now + Step_For_Move;
-    if (SpeedValue_Now == Min_SpeedValue) // && Actual_Command == STOp
+
+    // Portal
+    if (SpeedValue_Now == ZeroPWM | SpeedValue_Now == ZeroPWM - 1) // == 30 | == 29
+      SpeedValue_Now = ZeroPWM * (-1);
+    // FINISHER
+    if (SpeedValue_Now == Min_SpeedValue)
     {
       Step_For_Move = 0;  // command complete
       Serial.println("We Reversed");
     }
+
     // Command Release
     Serial.print("(Drop) Speed == ");
     Serial.println(SpeedValue_Now);
@@ -302,56 +287,58 @@ void Command_To_Motor (int instruction)
   //        WDT_ACTIVE = true;
   //      }
   //}
+  delay(100);
+  return;
 }
 
 void Send_Telemetry (int instruction)
 {
-  if (instruction == 5)
-  {
-    Serial.print("F"); //FORWARD
-  }
-  if (instruction == -5)
-  {
-    Serial.print("B"); //BACKWARD
-  }
-  if (instruction == 0)
-  {
-    Serial.print("S"); //STOP
-  }
+  //  if (instruction == 5)
+  //  {
+  //    Serial.print("F"); //FORWARD
+  //  }
+  //  if (instruction == -5)
+  //  {
+  //    Serial.print("B"); //BACKWARD
+  //  }
+  //  if (instruction == 0)
+  //  {
+  //    Serial.print("S"); //STOP
+  //  }
 }
 
 void Execute_The_Command(int Speed)
 {
-  if (Speed >= -255 & Speed <= 255)
+  if (Speed >= Min_SpeedValue & Speed <= Max_SpeedValue)
   {
-    if (Speed > 0) //F
+    if (Speed > ZeroPWM) //F
     {
       // Command Release
       digitalWrite(Direction_Of_Movement, HIGH);
       digitalWrite(Permission_To_Move, HIGH);
-      analogWrite(PWM_Pin, PWM_Value);
+      analogWrite(PWM_Pin, Speed);
       //Debug
       digitalWrite(ForwardLed, HIGH);
       digitalWrite(BackwardLed, LOW);
       digitalWrite(systemLed, LOW);
     }
-    if (Speed < 0) //B
+    if (Speed < ZeroPWM) //B
     {
       // Command Release
       digitalWrite(Direction_Of_Movement, LOW);
       digitalWrite(Permission_To_Move, HIGH);
-      analogWrite(PWM_Pin, PWM_Value);
+      analogWrite(PWM_Pin, abs(Speed)); // since it is less than 0
       //Debug
       digitalWrite(ForwardLed, LOW);
       digitalWrite(BackwardLed, HIGH);
       digitalWrite(systemLed, LOW);
     }
-    if (Speed == 0)
+    if (Speed == ZeroPWM)
     {
       // Command Release
       digitalWrite(Direction_Of_Movement, LOW);
       digitalWrite(Permission_To_Move, LOW);
-      analogWrite(PWM_Pin, PWM_Value);
+      analogWrite(PWM_Pin, Speed);
       //Debug
       digitalWrite(ForwardLed, LOW);
       digitalWrite(BackwardLed, LOW);
@@ -364,12 +351,13 @@ void Execute_The_Command(int Speed)
     // Command Release
     digitalWrite(Direction_Of_Movement, LOW);
     digitalWrite(Permission_To_Move, LOW);
-    analogWrite(PWM_Pin, PWM_Value);
+    analogWrite(PWM_Pin, ZeroPWM);
     //Debug
     Serial.print("Error!!! Speed == ");
     Serial.println(SpeedValue_Now);
     Serial.println("---------------");
-    SpeedValue_Now = 0;
+    SpeedValue_Now = ZeroPWM;
+    Step_For_Move = 0;
     Serial.print("Speed Value_Now = ");
     Serial.println(SpeedValue_Now);
     Serial.println("---------------");
