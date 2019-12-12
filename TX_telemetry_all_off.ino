@@ -57,7 +57,7 @@
 #define Wire_Connection_Check_Pin 10  // specify in the scheme
 #define DISPLAY_E          11   // test
 #define DISPLAY_RS         12   // test
-#define SWITCHER_PIN       13   // 0 - WIRE?  1 - Mbee?
+#define SWITCHER_PIN_plus_WireLed 13   // 0 - WIRE?  1 - Mbee?
 //
 
 //#define SWITCHER_Pin 6   // specify in the scheme
@@ -126,6 +126,7 @@ bool WireConnectionFlag_TX = false;
 int number_of_packet = 0;
 uint8_t CommandForRaper = 0;
 bool AlarmFlag = false;
+bool SwitchError = false;
 bool ReadyToPrint_DataFromRX = false;
 const uint16_t remoteAddress = 0x0001; //Адрес модема, которому будут передаваться данные.
 //
@@ -210,7 +211,7 @@ void setup() {
   pinMode(Wire_Connection_Check_Pin, INPUT); // D10
   //  pinMode(DISPAY_E, XX) ;           // D11 -
   //  pinMode(DISPAY_RS, XX);           // D12
-  pinMode(SWITCHER_PIN, OUTPUT);        // D13
+  pinMode(SWITCHER_PIN_plus_WireLed, OUTPUT);        // D13
 
   //Analog Pins Setup
   pinMode(Forward_Led, OUTPUT);               // A0
@@ -250,6 +251,28 @@ void setup() {
 void loop() {
   DEBUG.println("TX");
 
+
+
+  // test for real plate
+  //  DEBUG.println("All LOW");
+  //  digitalWrite(SWITCHER_PIN_plus_WireLed, LOW); // inverted D3A/D6A COM(4) <-> NO (1)
+  //  digitalWrite(Radio_Led, LOW);
+  //  delay(2000);
+  //  DEBUG.println(F("Wire HIGH"));
+  //  digitalWrite(SWITCHER_PIN_plus_WireLed, HIGH); // inverted D3A/D6A COM(4) <-> NO (1)
+  //  digitalWrite(Radio_Led, LOW);
+  //  delay(4000);
+  //  DEBUG.println(F("Wire HIGH Radio HIGH"));
+  //  digitalWrite(SWITCHER_PIN_plus_WireLed, HIGH); // inverted D3A/D6A COM(4) <-> NO (1)
+  //  digitalWrite(Radio_Led, HIGH);
+  //  delay(4000);
+  //  DEBUG.println(F("Radio HIGH"));
+  //  digitalWrite(SWITCHER_PIN_plus_WireLed, LOW); // inverted D3A/D6A COM(4) <-> NO (1)
+  //  digitalWrite(Radio_Led, HIGH);
+  //  delay(4000);
+  //  DEBUG.println("END 1349");
+
+
   //Read RC BatteryLvL
   V_RC_raw = analogRead(ADC_Battery_LvL_Pin);
   bool F = digitalRead(Forward_Check_Pin);
@@ -279,8 +302,7 @@ void loop() {
   {
     DEBUG.print("LCD_Print ");
     DEBUG.println(ReadyToPrint_DataFromRX);
-    //
-//    OLED_Display_Dynamic_Data();
+    //    OLED_Display_Dynamic_Data();
     ReadyToPrint_DataFromRX = false;
   }
   //
@@ -328,6 +350,15 @@ void loop() {
   //  disp.print(source);
 
   //  delay(500);
+    if (SwitchError == false)
+  {
+    Alarm_OFF();
+  }
+  
+  if (SwitchError == true)
+  {
+    Alarm_ON();
+  }
 
   delay(150);
   return;
@@ -346,6 +377,7 @@ int ReadCommandFromSwitcher(bool Rush, bool Back)
     digitalWrite(Backward_Led, LOW);
     digitalWrite(Forward_Led, HIGH);
     digitalWrite(Stop_Led, LOW);
+    SwitchError = false;
     //    DEBUG.println("Command RUSH ");
   }
   // Backward command
@@ -355,6 +387,7 @@ int ReadCommandFromSwitcher(bool Rush, bool Back)
     digitalWrite(Backward_Led, HIGH);
     digitalWrite(Forward_Led, LOW);
     digitalWrite(Stop_Led, LOW);
+    SwitchError = false;
     //    DEBUG.println("Command BACK ");
   }
   // Stop command
@@ -365,6 +398,7 @@ int ReadCommandFromSwitcher(bool Rush, bool Back)
     digitalWrite(Forward_Led, LOW);
     digitalWrite(Stop_Led, HIGH);
     //    DEBUG.println("Command STOP !!! ");
+    SwitchError = false;
   }
   // Error
   if (Rush == true & Back == true)
@@ -375,7 +409,7 @@ int ReadCommandFromSwitcher(bool Rush, bool Back)
     Command = Stop;
     digitalWrite(Backward_Led,  HIGH);
     digitalWrite(Forward_Led, HIGH);
-    Alarm_ON();
+    SwitchError = true;
     //    DEBUG.println("NO MOVE,error");
   }
 
@@ -400,19 +434,19 @@ void Set_SWITCHER_PIN(bool WireFlag)
   DEBUG.println(WireFlag);
   if (WireFlag == true)
   {
-    digitalWrite(SWITCHER_PIN, LOW); // inverted COM(4) <-> NC (3) connect Radio_Led
+    digitalWrite(SWITCHER_PIN_plus_WireLed, LOW); // inverted COM(4) <-> NC (3) connect to Radio_Led
     DEBUG.println("Radio_Led !HIGH");
-    digitalWrite(Radio_Led, LOW);   // connect Radio_Led but means WIRE connect
+    digitalWrite(Radio_Led, HIGH);   // connect to Wire_Led but means WIRE connect
     //    DEBUG.println("Radio_Led HIGH");
     delay(5);
     //    digitalWrite(Green_WireLess_Led, LOW); // does it exist?
   }
   if (WireFlag == false)
   {
-    digitalWrite(SWITCHER_PIN, HIGH); // inverted D3A/D6A COM(4) <-> NO (1)
+    digitalWrite(SWITCHER_PIN_plus_WireLed, HIGH); // inverted D3A/D6A COM(4) <-> NO (1)
     DEBUG.println("Radio_Led !LOW");
     delay(5);
-    digitalWrite(Radio_Led, HIGH);
+    digitalWrite(Radio_Led, LOW);
     //    digitalWrite(Green_WireLess_Led, HIGH); //  does it exist?
   }
   return;
@@ -583,7 +617,7 @@ void Print_Telemetry_Packet(uint8_t* buffer, size_t size)
     DEBUG.print(buffer[i]);
     DEBUG.print("; ");
   }
-//  delay(5);
+  //  delay(5);
   return;
 }
 
