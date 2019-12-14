@@ -112,6 +112,7 @@ bool wrong_command = false;
 bool FLAG_Release_Command = false;
 bool SuddenReverse = false;
 bool Release_The_Brakes = false;
+bool Current_Overload = false;
 // new feature
 bool WireConnectionFlag_RX = false;
 bool Packet_Received_Flag = false;
@@ -142,7 +143,7 @@ ISR(TIMER2_OVF_vect)
     Alarm_ON();
     if (WDT_ACTIVE == false)
     {
-      wdt_enable(WDTO_8S); // WDT ENABLE!
+     //wdt_enable(WDTO_4S); // WDT ENABLE!
       WDT_ACTIVE = true;
     }
     Counter_To_Start_WDT = 0;
@@ -262,9 +263,8 @@ void setup()
   Send_Telemetry(WireConnectionFlag_RX); //starting scream
 
   PC_Debug.println();
-  PC_Debug.println("_x_RX started!_x_");
+  PC_Debug.println("__RX started!__");
   //  delay(500);  //Задержка не обязательна и вставлена для удобства работы с терминальной программой.
-  delay(300); // ради отката назад при потере связи
 }
 
 void loop()
